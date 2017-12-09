@@ -29,6 +29,7 @@ webpackJsonp([0], {
 
 - manifest.js 代码阅读
 由于没有配置任何压缩 js 的选项，因此 manifest.js 的源码大约在 150 行左右，简化后为 28 行（已经跑过代码，实测没问题）。鉴于精简后的代码真的不多，因而先贴代码，大家带着刚才提出的问题，先看看能找到几个答案：
+```
 (function(modules) {
   window["webpackJsonp"] = function webpackJsonpCallback(chunkIds, moreModules, executeModules) {
     var moduleId, result;
@@ -57,27 +58,31 @@ webpackJsonp([0], {
     return module.exports;
   }
 })([]);
-
+```
 首先应该看到的是，manifest.js 内部是一个 IIFE，就是自执行函数咯，这个函数会接受一个空数组作为参数，该数组被命名为 modules。之后看到我们在 index.js 中的猜想，果然在 window 上挂了一个名为 webpackJsonp 的函数。它接受的三个参数，分别名为chunkIds, moreModules, executeModules。对应了 index.js 中调用 webpackJsonp 时传入的三个参数。而 webpackJsonp 内究竟是有怎样的逻辑呢？
 先不管定义的参数，webpackJsonp 先是 for in 遍历了一次 moreModules,将 moreModules 内的所有方法都存在 modules， 也就是自执行函数执行时传入的数组。
 之后是一个条件判断：
+```
 if (executeModules) {
   for (i = 0; i < executeModules.length; i++) {
     result = __webpack_require__(executeModules[i]);
   }
 }
+```
 
 判断 executeModules， 也就是第三个参数是否存在，如存在即执行 __webpack_require__ 方法。在 index.js 调用 webpackJsonp 方法时，这个参数当然是存在的，因而要看看 __webpack_require__ 方法是什么了。
+```
 __webpack_require__ 接受一个名为 moduleId 的参数。方法内部首先是一个条件判断，先不管。接下来看到赋值逻辑
 var module = installedModules[moduleId] = {
   exports: {}
 };
+```
+- 结合刚才的条件判断，可以推测出 installedModules 是一个缓存的容器，那么前面的代码意思就是如果缓存中有对应的 moduleId,那么直接返回它的 exports，不然就定义并赋值一个吧。接着先偷看一下 __webpack_require__ 的最后的返回值，可以看到函数返回的是 module.exports，那么 module.exports 又是如何被赋值的呢？ 看看之后的代码：
+```modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);```
 
-结合刚才的条件判断，可以推测出 installedModules 是一个缓存的容器，那么前面的代码意思就是如果缓存中有对应的 moduleId,那么直接返回它的 exports，不然就定义并赋值一个吧。接着先偷看一下 __webpack_require__ 的最后的返回值，可以看到函数返回的是 module.exports，那么 module.exports 又是如何被赋值的呢？ 看看之后的代码：
-modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
-
-刚才我们知道 modules[moduleId] 就是 moreModules 中的方法，此处就是将 this 指定为 module.exports，再把module, module.exports, __webpack_require__ 传入去作为参数调用。这三个参数是不是很熟悉？之前我们看 index.js 里面代码时，有一个疑问就是模块化是如何实现的。这里我们已经看出了眉目。
+- 刚才我们知道 modules[moduleId] 就是 moreModules 中的方法，此处就是将 this 指定为 module.exports，再把module, module.exports, - __webpack_require__ 传入去作为参数调用。这三个参数是不是很熟悉？之前我们看 index.js 里面代码时，有一个疑问就是模块化是如何实现的。这里我们已经看出了眉目。
 其实 webpack 就是将每一个 js 文件封装成一个函数，每个文件中的 require 方法对应的就是 __webpack_require__， __webpack_require__ 会根据传入的 moduleId 再去加载对应的代码。而当我们想导出 js 文件的值时，要么用 module.exports，要么用 exports，这就对应了module, module.exports两个参数。少接触这块的童鞋，应该就能理解为何导出值时，直接使用 exports = xxx 会导出失败了。简单举个例子：
+```
 const module = {
   exports: {}
 };
@@ -95,8 +100,8 @@ function demo2(exports) {
 
 demo2(module.exports);
 console.log(module.exports); // 1
-
-粘贴这段代码去浏览器跑一下，可以发现两次打印出来都是1。这和 wenpack 打包逻辑是一模一样的。
+```
+- 粘贴这段代码去浏览器跑一下，可以发现两次打印出来都是1。这和 wenpack 打包逻辑是一模一样的。
 梳理一下打包后代码执行的流程，首先 minifest.js 会定义一个 webpackJsonp 方法，待其他打包后的文件（也可称为 chunk）调用。当调用 chunk 时，会先将该 chunk 中所有的 moreModules， 也就是每一个依赖的文件也可称为 module （如 test.js）存起来。之后通过 executeModules 判断这个文件是不是入口文件，决定是否执行第一次  __webpack_require__。而 __webpack_require__ 的作用，就是根据这个 module 所 require 的东西，不断递归调用 __webpack_require__，__webpack_require__函数返回值后供 require 使用。当然，模块是不会重复加载的，因为 installedModules 记录着 module 调用后的 exports 的值，只要命中缓存，就返回对应的值而不会再次调用 module。webpack 打包后的文件，就是通过一个个函数隔离 module 的作用域，以达到不互相污染的目的。
 
 作者：sea_ljf
